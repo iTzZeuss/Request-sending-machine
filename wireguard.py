@@ -2,7 +2,6 @@ import subprocess
 import random
 import time
 import os
-import requests
 import asyncio
 import aiohttp
 
@@ -15,45 +14,51 @@ tunnels = [
     r"C:\Users\User\Downloads\hide.me.sydney.conf",
     r"C:\Users\User\Downloads\hide.me.marseil.conf",
 ]
-current_tunnel = []
+
+current_tunnel = [None] 
 
 def activate_tunnel(tunnel_path):
     tunnel_name = os.path.splitext(os.path.basename(tunnel_path))[0]
     current_tunnel[0] = tunnel_name
-    
-    subprocess.run([WIREGUARD_EXE, "/uninstalltunnelservice", tunnel_name])
 
-    subprocess.run([WIREGUARD_EXE, "/installtunnelservice", tunnel_path])
+    print(f"Activating tunnel: {tunnel_name}")
+    subprocess.run([WIREGUARD_EXE, "/uninstalltunnelservice", tunnel_name], check=False)
+    subprocess.run([WIREGUARD_EXE, "/installtunnelservice", tunnel_path], check=True)
     print(f"Connected to tunnel: {tunnel_name}")
 
-async def fetch(s, url):
-    
-    async with s.get(url) as r:
-        if r.status == 429 or 403 or 401:
-            while True:
-                last_choice = None
-                selected = random.choice(tunnels)
-                while selected == last_choice:
+async def fetch(session, url):
+    last_choice = None
+    while True:
+        try:
+            async with session.get(url) as response:
+                if response.status in {429, 403, 401}:
+                    print(f"Blocked or rate limited ({response.status}). Switching tunnel...")
                     selected = random.choice(tunnels)
-                activate_tunnel(selected)
-                selected = last_choice       
-    return await r.text()
-    
-async def fetch_all(s):
-    tasks = []
-    for url in range(10000):
-        task = asyncio.create_task(fetch(s, url))
-        tasks.append(task)
-        
-    res = await asyncio.gather(*tasks)
-    return res
-            
-async def main(s, urls):
-    async with aiohttp.ClientSession() as session:
-        htmls = await fetch_all(session)
+                    while selected == last_choice:
+                        selected = random.choice(tunnels)
+                    activate_tunnel(selected)
+                    last_choice = selected
+                    await asyncio.sleep(5) 
+                    continue
+                text = await response.text()
+                return text
+        except Exception as e:
+            print(f"Request failed: {e}. Retrying...")
+            await asyncio.sleep(3)
 
-if __name__ == '__main__':
+async def fetch_all(session):
+    url = "Add your desired URL"
+    tasks = [asyncio.create_task(fetch(session, url)) for _ in range(10000)] 
+    results = await asyncio.gather(*tasks)
+    return results
+
+async def main():
+    async with aiohttp.ClientSession() as session:
+        results = await fetch_all(session)
+        print(f"Fetched {len(results)} pages successfully.")
+
+if __name__ == "__main__":
     start = time.perf_counter()
-    asyncio.run(fetch_all())
+    asyncio.run(main())
     end = time.perf_counter()
-    print(f"The operation on tunnel {current_tunnel[0]} took {end - start} seconds.")
+    print(f"The operation on tunnel {current_tunnel[0]} took {end - start:.2f} seconds.")
